@@ -1,0 +1,83 @@
+---
+title: "Practical Machine Learning Project"
+author: "Brian Saunders"
+date: "Sunday, January 25, 2015"
+output: html_document
+---
+## Synopsis
+This document reports the results of a model built to predict the quality of a weightlifting
+exercise given a set of many measurements [data][1] by men performing the task[paper][2]. I
+have decided to use a Random Forest Algorithm for the model.
+[1]: http://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises "data"
+
+
+```{r dinput}
+library(caret)
+library(randomForest)
+WLEcases <- read.csv("pml-testing.csv")
+WLEdata <- read.csv("pml-training.csv")
+```
+The variables related to row number and time stamps should not be a factor in this analysis.
+In addition, the rows where the window is new and additional variables are generated represent
+a small number of cases, and in none of the test cases are those variables present. Consequently,
+I will drop them.
+
+```{r dformat}
+droppat <- "^kurtosis_|^skewness_|^max_|^min_|^amplitude_|^var_|^avg_|^stddev_"
+testdrop <- grepl(droppat,names(WLEcases))
+traindrop <- grepl(droppat,names(WLEdata))
+testdrop[1:7] = TRUE
+traindrop[1:7] = TRUE
+WLEcases <- WLEcases[,!testdrop]
+WLEdata <- WLEdata[,!traindrop]
+
+set.seed(92122)
+RFtrain <- createDataPartition(y=WLEdata$classe,p=0.75,list=FALSE)
+WLEtrain <- WLEdata[RFtrain,]
+WLEtest <- WLEdata[-RFtrain,]
+```
+First I'll try fitting all the variables.
+```{r rfcalc1, cache=TRUE}
+WLEfullmod <- randomForest(classe ~ .,data=WLEtrain)
+print(WLEfullmod)
+WLEfimp <- importance(WLEfullmod,type=2)
+plot(WLEfimp[order(-WLEfimp)],xlab="Feature Importance Rank",ylab="Gini Importance",
+     main="Feature Selection Aid")
+```
+The plot of the feature importance shows a steadily decreaing value of the Gini Importance,
+but no obvious place where we could cut off the number of features we use. I will use cross-validation
+with the random forest model data.
+
+```{r crossv, cache=TRUE}
+WLEfcv <- rfcv(WLEtrain[,-53],WLEtrain$classe)
+print(WLEfcv$error.cv)
+```
+
+From the results of the cross-validation, we see a steadily decreasing error rate, even when all
+variables are used. This suggests that using all variables will probably not result in overfitting.
+I will still build a model with 1/2 of the variables (26) in order to compare.
+
+```{r rfcalc2, cache=TRUE}
+WLEt26form <- as.formula(paste("classe~",paste(names(WLEtrain)[order(-WLEfimp)][1:26],collapse="+")))
+WLEt26mod <- randomForest(WLEt26form,data=WLEtrain)
+print(WLEt26mod)
+
+
+WLEfpred <- predict(WLEfullmod,WLEtest)
+table(WLEfpred,WLEtest$classe)
+
+WLEt26pred <- predict(WLEt26mod,WLEtest)
+table(WLEt26pred,WLEtest$classe)
+```
+
+A comparison of the confusion tables for these cases indicates that even though the 26-variable model
+only produces a slighly larger error (0.63% versus 0.46%), I am sticking with the full model for prediction.
+
+```{r casepr}
+casepred <- predict(WLEfullmod,WLEcases)
+for (i in 1:length(casepred)) {
+filename = paste0("problem_id_",i,".txt")
+write.table(casepred[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+}
+```
+
